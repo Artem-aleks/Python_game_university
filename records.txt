@@ -1,0 +1,3 @@
+Level:2
+Score:570
+Hp:0
