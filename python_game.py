@@ -1,5 +1,6 @@
 import pygame
 import random
+import sqlite3
 import time
 import pygame_menu
 from pygame_menu import themes
@@ -186,7 +187,6 @@ class Boss(pygame.sprite.Sprite):
 
         self.shoot()
 
-
     def shoot(self):
         time_now = pygame.time.get_ticks()
         if time_now - self.last_shot_time > self.shoot_delay:
@@ -221,7 +221,16 @@ def unpause_music():
     pygame.mixer.music.unpause()
 
 
-def Game():
+data_base = sqlite3.connect('data_base.db')
+cur = data_base.cursor()
+cur.execute(
+    """CREATE TABLE IF NOT EXISTS Users (user_name TEXT,levels INTEGER, score INTEGER, hp INTEGER);""")
+data_base.commit()
+cur.close()
+data_base.close()
+
+
+def Game(player_name):
     # Создание игрока
     player = Player(WIDTH // 2 - player_widht // 2, HEIGHT - player_height - 10)
     all_sprites.add(player)
@@ -243,6 +252,7 @@ def Game():
 
     # Основной игровой цикл
     running = True
+    paused = False
     clock = pygame.time.Clock()
     while running:
         for event in pygame.event.get():
@@ -253,6 +263,13 @@ def Game():
                     pause_music()
                 elif event.key == pygame.K_w:
                     unpause_music()
+                elif event.key == pygame.K_ESCAPE:
+                    paused = not paused
+                    if not paused:
+                        screen.fill(BLACK)
+                    else:
+                        draw_text(screen, "ПАУЗА", 64, WIDTH / 2, HEIGHT / 2)
+                    pygame.display.flip()
                 elif event.key == pygame.K_LEFT:
                     player.speed_x = -5
                 elif event.key == pygame.K_RIGHT:
@@ -262,6 +279,8 @@ def Game():
             elif event.type == pygame.KEYUP:
                 if event.key == pygame.K_LEFT or event.key == pygame.K_RIGHT:
                     player.speed_x = 0
+        if paused:
+            continue
 
         all_sprites.update()
 
@@ -306,7 +325,6 @@ def Game():
         hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
         if len(hits) > 0:
             game_over = True
-
 
         # Проверка условий для перехода на следующий уровень
         if score >= level * 300:
@@ -355,11 +373,21 @@ def Game():
 
         # Отображение текста при окончании игры
         if game_over:
-            file_progress = open("records.txt", "a")
-            file_progress.write("Level:" + str(level) + "\n")
-            file_progress.write("Score:" + str(score) + "\n")
-            file_progress.write("Hp:" + str(hp) + "\n")
-            file_progress.close()
+
+            mass_list = []
+            mass_list.append(player_name)
+            mass_list.append(level)
+            mass_list.append(score)
+            mass_list.append(hp)
+
+            data_base = sqlite3.connect('data_base.db')
+            cur = data_base.cursor()
+            cur.execute("INSERT INTO Users VALUES (?, ?, ?, ?)", mass_list)
+            data_base.commit()
+            cur.close()
+            data_base.close()
+            mass_list.clear()
+
             screen.fill(BLACK)
             game_over_text = font.render("Game Over", True, RED)
             screen.blit(game_over_text, (WIDTH // 2 - 75, HEIGHT // 2 - 18))
@@ -368,11 +396,20 @@ def Game():
             main()
 
         elif game_win:
-            file_progress = open("records.txt", "a")
-            file_progress.write("Level:" + str(level) + "\n")
-            file_progress.write("Score:" + str(score) + "\n")
-            file_progress.write("Hp:" + str(hp) + "\n")
-            file_progress.close()
+            mass_list = []
+            mass_list.append(player_name)
+            mass_list.append(level)
+            mass_list.append(score)
+            mass_list.append(hp)
+
+            data_base = sqlite3.connect('data_base.db')
+            cur = data_base.cursor()
+            cur.execute("INSERT INTO Users VALUES (?, ?, ?, ?)", mass_list)
+            data_base.commit()
+            cur.close()
+            data_base.close()
+            mass_list.clear()
+
             screen.fill(BLACK)
             game_win_text = font.render("You Win!", True, RED)
             screen.blit(game_win_text, (WIDTH // 2 - 63, HEIGHT // 2 - 18))
@@ -384,14 +421,23 @@ def Game():
 
         clock.tick(60)
 
-    # Завершение игры
     pygame.quit()
+
+
+def draw_text(surface, text, size, x, y):
+    font = pygame.font.SysFont(None, size)
+    text_obj = font.render(text, True, (255, 255, 255))
+    text_rect = text_obj.get_rect()
+    text_rect.center = (x, y)
+    surface.blit(text_obj, text_rect)
 
 
 class Menu:
     def __init__(self):
+        self.data = ''
+        self.player_game = ''
         self.mainmenu = pygame_menu.Menu('Главное меню', 800, 600, theme=themes.THEME_SOLARIZED)
-        self.mainmenu.add.text_input('Имя: ', default='Имя')
+        self.mainmenu.add.text_input('Имя: ', default='Имя', onchange=self.save_name)
         self.mainmenu.add.button('Начать игру', self.progress)
         self.mainmenu.add.button("Управление", self.informations)
         self.mainmenu.add.button("Рекорды", self.recording_draw)
@@ -405,7 +451,12 @@ class Menu:
         self.update_loading = pygame.USEREVENT + 0
         self.menu_type = 0
 
+    def save_name(self, name):
+        self.player_game = name
+
     def game_menu_run(self):
+        clock = pygame.time.Clock()
+
         while True:
             events = pygame.event.get()
             for event in events:
@@ -424,10 +475,12 @@ class Menu:
                     if (self.mainmenu.get_current().get_selected_widget()):
                         self.arrow.draw(screen, self.mainmenu.get_current().get_selected_widget())
                 elif self.menu_type == 1:
-                    self.information_page_draw()
+                    self.information_page_draw(events)
                 elif self.menu_type == 2:
-                    self.recording()
+                    self.recording(events)
+
             pygame.display.update()
+            clock.tick(60)
 
     def blit_text(self, surface, text, pos, font, color=pygame.Color('black')):
         words = [word.split(' ') for word in text.splitlines()]
@@ -446,7 +499,7 @@ class Menu:
             x = pos[0]
             y += word_height
 
-    def information_page_draw(self):
+    def information_page_draw(self, events):
 
         file_object = open("information", "r")
         data = file_object.read()
@@ -457,18 +510,13 @@ class Menu:
         button_rect = pygame.Rect(200, 200, 300, 100)
         button_text = "Вернуться назад в меню"
 
-        running = True
-        clock = pygame.time.Clock()
-
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:
-                        if button_rect.collidepoint(event.pos):
-                            pygame.display.flip()
-                            main()
+        for event in events:
+            if event.type == pygame.QUIT:
+                exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    if button_rect.collidepoint(event.pos):
+                        self.menu_type = 0
 
         pygame.draw.rect(screen, BLACK, button_rect)
         pygame.draw.rect(screen, WHITE, button_rect, 2)
@@ -482,43 +530,46 @@ class Menu:
         self.blit_text(screen, data, (40, 40), font)
 
         pygame.display.flip()
-        clock.tick(60)
 
-    def recording(self):
-
-        file_recording = open("records.txt")
-        data = file_recording.read()
-        file_recording.close()
-
+    def recording(self, events):
         screen.fill(WHITE)
-        button_rect = pygame.Rect(100, 100, 200, 50)
+        data_base = sqlite3.connect('data_base.db')
+        cur = data_base.cursor()
+
+        cur.execute("SELECT * FROM Users ORDER BY score")
+        cur.execute("SELECT * FROM Users LIMIT 5")
+
+        button_rect = pygame.Rect(400, 200, 200, 50)
         button_text = "Вернуться назад в меню"
 
-        running = True
-        clock = pygame.time.Clock()
-
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:
-                        if button_rect.collidepoint(event.pos):
-                            main()
+        for event in events:
+            if event.type == pygame.QUIT:
+                exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    if button_rect.collidepoint(event.pos):
+                        self.menu_type = 0
 
         pygame.draw.rect(screen, BLACK, button_rect)
         pygame.draw.rect(screen, WHITE, button_rect, 2)
 
-        # Отрисовка текста на кнопке
         font = pygame.font.Font(None, 20)
         text = font.render(button_text, True, WHITE)
         text_rect = text.get_rect(center=button_rect.center)
         screen.blit(text, text_rect)
 
-        self.blit_text(screen, data, (20, 20), font)
+        data = cur.fetchall()
+        row_height = 50
+        for i, row in enumerate(data):
+            text = f"Имя: {row[0]}, Уровень: {row[1]}, Cчет: {row[2]}"
+            font = pygame.font.SysFont(None, 24)
+            text_obj = font.render(text, True, (BLACK))
+            screen.blit(text_obj, (10, i * row_height + 10))
+
+        cur.close()
+        data_base.close()
 
         pygame.display.flip()
-        clock.tick(60)
 
     def recording_draw(self):
         self.menu_type = 2
@@ -529,7 +580,7 @@ class Menu:
         self.start_the_game()
 
     def start_the_game(self):
-        Game()
+        Game(self.player_game)
 
     def informations(self):
         pygame.display.flip()
@@ -537,7 +588,7 @@ class Menu:
 
 
 def main():
-    play_music()
+    # play_music()
     menu = Menu()
     menu.game_menu_run()
 
